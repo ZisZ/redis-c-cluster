@@ -21,6 +21,7 @@
 #include <vector>
 #include <list>
 #include <set>
+#include <vector>
 #include <sstream>
 #include <stdint.h>
 #include <stdlib.h>
@@ -33,11 +34,14 @@ namespace cluster {
 
 class Node {
 public:
-    Node(const std::string& host, unsigned int port, unsigned int timeout = 0);
+    Node(const std::string& host, unsigned int port,
+        unsigned int timeout = 0, const std::string& password = "");
     ~Node();
 
     void *get_conn();
+    void *get_readonly_conn();
     void put_conn(void *conn);
+    void put_readonly_conn(void *conn);
 
     /**
      * A comparison function for equality;
@@ -69,7 +73,9 @@ private:
     unsigned int timeout_;
 
     std::list<void *>  connections_;
+    std::list<void *>  readonly_connections_;
     pthread_spinlock_t lock_;
+    std::string password_;
 
     /* for statistic purpose begin */
     uint64_t conn_get_count_;
@@ -105,7 +111,7 @@ public:
         int                ttls; //TTLs used by last call of run()
     } ThreadDataType;
 
-    Cluster(unsigned int timeout = 0); // timeout: seconds waiting for when connecting to and requsting redis servers
+    Cluster(unsigned int timeout = 0); // timeout: milliseconds waiting for when connecting to and requsting redis servers
     virtual ~Cluster();
 
     /**
@@ -120,7 +126,7 @@ public:
      *   0 - success
      *  <0 - fail
      */
-    int setup(const char *startup, bool lazy);
+    int setup(const char *startup, bool lazy, const std::string& password = "");
 
     /**
      * Caller should call freeReplyObject to free reply.
@@ -131,6 +137,7 @@ public:
      *             get the last error message with function err() & strerr()
      */
     redisReply* run(const std::vector<std::string> &commands);
+    std::vector<redisReply*> run_pipeline(const std::vector<std::string> &pipeline_commands);
     int err();
     std::string strerr();
     int ttls();               /* return number of ttls used by last run() */
@@ -143,10 +150,12 @@ public:/* for unittest */
 
 private:
     bool add_node(const std::string &host, int port, Node *&rpnode);
+    bool add_node_list(const std::string &host, int port, std::vector<Node *> &nlist);
     int parse_startup(const char *startup);
     int load_slots_cache();
     int clear_slots_cache();
     Node *get_random_node(const Node *last);
+    Node *get_random_node_from_list(const std::vector<Node *> &slave_node_list);
     inline ThreadDataType &specific_data();
     inline std::ostringstream& set_error(ErrorE e);
 
@@ -164,13 +173,16 @@ private:
      *  not NULL - success, return the redisReply object. Caller should call freeReplyObject to free reply object.
      *  NULL     - error
      */
-    redisReply* redis_command_argv(const std::string& key, int argc, const char **argv, const size_t *argvlen);
-
+    redisReply* redis_command_argv(const std::string& key, int argc, const char **argv, const size_t *argvlen, bool is_slave = false);
+    std::vector<redisReply*> redis_command_pipeline(int slot,std::vector<std::pair<int,std::string> >commands,bool is_slave = false);
     NodePoolType        node_pool_;
+    NodePoolType        slave_node_pool_;
     pthread_spinlock_t  np_lock_;
 
     std::vector<Node *> slots_;
+    std::vector<std::vector<Node *> >slave_lists_;
     pthread_spinlock_t  load_slots_lock_;
+    std::string password_;
 
     bool                load_slots_asap_;
     unsigned int        timeout_;
